@@ -1,18 +1,24 @@
 package com.example;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.util.UUID;
+import java.util.Objects;
 
 public abstract class Product {
-    private UUID uuid;
-    private String name;
-    private Category category;
+    private final UUID uuid;
+    private final String name;
+    private final Category category;
     private BigDecimal price;
 
-    public Product(String name, Category category, BigDecimal price) {
-        this.uuid = UUID.randomUUID();
-        this.name = name;
+    public Product(UUID uuid, String name, Category category, BigDecimal price) {
+        Objects.requireNonNull(uuid);
+        Objects.requireNonNull(name);
+        Objects.requireNonNull(category);
+        Objects.requireNonNull(price);
+        if (price.signum() < 0) throw new  IllegalArgumentException("Price cannot be negative.");
+
+        this.uuid = uuid;
+        this.name = name.trim();
         this.category = category;
         this.price = price;
     }
@@ -33,7 +39,8 @@ public abstract class Product {
         return price;
     }
 
-    public void setPrice(BigDecimal newPrice) {
+    public void price(BigDecimal newPrice) {
+        Objects.requireNonNull(newPrice);
         this.price = newPrice;
     }
 
