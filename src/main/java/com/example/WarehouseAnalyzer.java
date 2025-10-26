@@ -1,7 +1,6 @@
 package com.example;
 
 import java.math.BigDecimal;
-import java.math.MathContext;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.*;
@@ -149,18 +148,28 @@ class WarehouseAnalyzer {
         List<Product> products = warehouse.getProducts();
         int n = products.size();
         if (n == 0) return List.of();
-        double sum = products.stream().map(Product::price).mapToDouble(bd -> bd.doubleValue()).sum();
-        double mean = sum / n;
-        double variance = products.stream()
-                .map(Product::price)
-                .mapToDouble(bd -> Math.pow(bd.doubleValue() - mean, 2))
-                .sum() / n;
+
+        List<Double> priceList = products.stream()
+                .map(p -> p.price().doubleValue())
+                .sorted()
+                .toList();
+        // Trim 10% from each end of priceList to reduce outlier impact on mean/std
+        int trimCount = Math.max(1, (int) Math.floor(n * 0.1));
+        List<Double> trimmedPriceList = priceList.subList(trimCount, n - trimCount);
+
+        double mean = trimmedPriceList.stream().mapToDouble(d -> d).average().orElse(0.0);
+        double variance = trimmedPriceList.stream()
+                .mapToDouble(d -> Math.pow(d - mean, 2))
+                .sum() / trimmedPriceList.size();
         double std = Math.sqrt(variance);
         double threshold = standardDeviations * std;
+
         List<Product> outliers = new ArrayList<>();
         for (Product p : products) {
             double diff = Math.abs(p.price().doubleValue() - mean);
-            if (diff > threshold) outliers.add(p);
+            if (diff > threshold) {
+                outliers.add(p);
+            }
         }
         return outliers;
     }
@@ -175,28 +184,38 @@ class WarehouseAnalyzer {
      * @return list of ShippingGroup objects covering all shippable products
      */
     public List<ShippingGroup> optimizeShippingGroups(BigDecimal maxWeightPerGroup) {
-        double maxW = maxWeightPerGroup.doubleValue();
-        List<Shippable> items = warehouse.shippableProducts();
-        // Sort by descending weight (First-Fit Decreasing)
-        items.sort((a, b) -> Double.compare(Objects.requireNonNullElse(b.weight(), 0.0), Objects.requireNonNullElse(a.weight(), 0.0)));
+        Objects.requireNonNull(maxWeightPerGroup);
+        if (maxWeightPerGroup.signum() <= 0) {
+            throw new IllegalArgumentException("Max weight must be positive.");
+        }
+        final double maxGroupWeight = maxWeightPerGroup.doubleValue();
+        // Get all shippable products, sorted by weight descending
+        List<Shippable> items = warehouse.shippableProducts().stream()
+                .sorted(Comparator.comparingDouble(Shippable::weight).reversed())
+                .toList();
+        // First-fit decreasing bin packing
         List<List<Shippable>> bins = new ArrayList<>();
         for (Shippable item : items) {
-            double w = Objects.requireNonNullElse(item.weight(), 0.0);
+            double weight = item.weight();
+            if (weight > maxGroupWeight) throw new IllegalArgumentException("Item weight exceeds max group weight.");
             boolean placed = false;
+            // Try to place in existing bins
             for (List<Shippable> bin : bins) {
-                double binWeight = bin.stream().map(Shippable::weight).reduce(0.0, Double::sum);
-                if (binWeight + w <= maxW) {
+                double binWeight = bin.stream().mapToDouble(Shippable::weight).sum();
+                if (binWeight + weight <= maxGroupWeight) {
                     bin.add(item);
                     placed = true;
                     break;
                 }
             }
+            // If not placed, create a new bin
             if (!placed) {
                 List<Shippable> newBin = new ArrayList<>();
                 newBin.add(item);
                 bins.add(newBin);
             }
         }
+        // Convert bins to ShippingGroup objects
         List<ShippingGroup> groups = new ArrayList<>();
         for (List<Shippable> bin : bins) groups.add(new ShippingGroup(bin));
         return groups;
@@ -244,8 +263,7 @@ class WarehouseAnalyzer {
      *    The tests imply a scenario where 15 of 20 items (priced 2000) yield ~75% and should trigger a warning
      *    when percentage exceeds 70%.
      *  - Category diversity: count of distinct categories in the inventory. The tests expect at least 2.
-     *  - Convenience booleans: highValueWarning (percentage > 70%) and minimumDiversity (category count >= 2).
-     *
+     *  - Convenience booleans: highValueWarning (percentage > 70%) and minimumDiversity (category count >= 2).*
      * Note: The exact high-value threshold is implementation-defined, but the provided tests create a clear
      * separation using very expensive electronics (e.g., 2000) vs. low-priced food items (e.g., 10),
      * allowing percentage computation regardless of the chosen cutoff as long as it matches the scenario.
